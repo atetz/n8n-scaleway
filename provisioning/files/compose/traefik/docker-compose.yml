@@ -1,0 +1,52 @@
+name: traefik
+
+services:
+  traefik:
+    image: traefik:v3.7
+    container_name: traefik
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+    networks:
+      - proxy
+
+    ports:
+      - "80:80"   # Needed for the Let's Encrypt HTTP challenge and the HTTPS redirect
+      - "443:443"
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./letsencrypt:/letsencrypt # acme.json lives here (must be chmod 600)
+
+    command:
+      # EntryPoints
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.web.http.redirections.entrypoint.permanent=true"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.websecure.http.tls=true"
+      # Every router on websecure gets a Let's Encrypt certificate by default
+      - "--entrypoints.websecure.http.tls.certresolver=le"
+
+      # Docker provider: only containers with traefik.enable=true are exposed
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=proxy"
+
+      # Let's Encrypt
+      - "--certificatesresolvers.le.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.le.acme.httpchallenge.entrypoint=web"
+      # Uncomment to test against the staging server (no rate limits, untrusted certs)
+      # - "--certificatesresolvers.le.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory"
+
+      # Observability
+      - "--log.level=INFO"
+      - "--accesslog=true"
+      - "--metrics.prometheus=true"
+
+networks:
+  proxy:
+    name: proxy

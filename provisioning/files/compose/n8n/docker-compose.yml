@@ -1,0 +1,100 @@
+# Pin the project name so volumes keep matching the existing ones
+# (n8n_n8n_data, n8n_postgres_data), whatever folder this file lives in.
+name: n8n
+
+services:
+  n8n:
+    image: n8nio/n8n:2.43.8 # Pinned: upgrade on purpose, not on every pull
+    container_name: n8n
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5678:5678" # Only exposed locally, Traefik handles external access
+    environment:
+      # Database
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB}
+      - DB_POSTGRESDB_USER=${POSTGRES_USER}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD}
+
+      # Must match the key n8n already uses, or saved credentials can't be decrypted
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+
+      # URLs and proxy
+      - N8N_HOST=${DOMAIN}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - N8N_EDITOR_BASE_URL=https://${DOMAIN}/
+      - N8N_WEBHOOK_URL=https://${DOMAIN}/ # Replaces WEBHOOK_URL from n8n 2.30.0
+      - N8N_PROXY_HOPS=1
+
+      # Runtime
+      - NODE_ENV=production
+      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE} # Used by Schedule/Cron triggers
+      - TZ=${GENERIC_TIMEZONE}
+      - NODE_FUNCTION_ALLOW_EXTERNAL=langchain # Important for LangChain nodes!
+
+      # Uncomment together with the ./local-files volume below if workflows read/write files
+      # - N8N_RESTRICT_FILE_ACCESS_TO=/files
+    volumes:
+      - n8n_data:/home/node/.n8n # Workflows, settings and the encryption key config
+      # - ./local-files:/files
+    networks:
+      - n8n
+      - proxy
+    depends_on:
+      postgres:
+        condition: service_healthy # Wait until Postgres accepts connections
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.services.n8n.loadbalancer.server.port=5678"
+
+      - "traefik.http.routers.n8n-open.rule=Host(`${DOMAIN}`)"
+      # - "traefik.http.routers.n8n-open.rule=Host(`${DOMAIN}`) && (PathPrefix(`/webhook-test`) || PathPrefix(`/webhook`))" # only allow public access to n8n webhooks
+      - "traefik.http.routers.n8n-open.priority=100"
+      - "traefik.http.routers.n8n-open.service=n8n"
+      - "traefik.http.routers.n8n-open.entrypoints=websecure"
+      - "traefik.http.routers.n8n-open.middlewares=n8n-headers"
+
+      # Security headers
+      - "traefik.http.middlewares.n8n-headers.headers.stsSeconds=31536000"
+      - "traefik.http.middlewares.n8n-headers.headers.stsIncludeSubdomains=true"
+      - "traefik.http.middlewares.n8n-headers.headers.forceSTSHeader=true"
+      - "traefik.http.middlewares.n8n-headers.headers.contentTypeNosniff=true"
+      - "traefik.http.middlewares.n8n-headers.headers.referrerPolicy=strict-origin-when-cross-origin"
+
+      # - "traefik.http.routers.n8n-restricted.rule=Host(`${DOMAIN}`)" # secure console with IP allowlist
+      # - "traefik.http.routers.n8n-restricted.priority=1"
+      # - "traefik.http.routers.n8n-restricted.service=n8n"
+      # - "traefik.http.routers.n8n-restricted.entrypoints=websecure"
+      # - "traefik.http.routers.n8n-restricted.middlewares=n8n-headers,ip-allowlist"
+      # - "traefik.http.middlewares.ip-allowlist.ipallowlist.sourcerange=${IP_WHITELIST}"
+
+  postgres:
+    image: postgres:14 # Support ends Nov 2026, see README for the upgrade
+    container_name: n8n_postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - n8n
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  n8n_data:
+  postgres_data:
+
+networks:
+  n8n:
+  proxy:
+    external: true # Created by the traefik compose project
