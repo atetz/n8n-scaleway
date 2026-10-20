@@ -116,7 +116,7 @@ One playbook, always connecting as the Deploy user. Steps, in order:
 - **Verified with the first real Backup**: `ObjectStorageObjectsWrite` plus the bucket policy is enough for the upload.
 - **Postgres 18 on a fresh VM**: no data to migrate; only the volume path changes.
 - **Test Dump**: the operator has a real Dump from the existing install, kept in `provisioning/dumps/` (gitignored via `*.dump`). Use it for the Dump import acceptance check: workflows present, credentials decrypt with the old `N8N_ENCRYPTION_KEY`.
-- **README**: not written yet. Covers both stages; see "README must cover" below. Loading `.env` works either with `set -a; source .env; set +a` or with the oh-my-zsh `dotenv` plugin (which only loads `.env` from the directory you `cd` into).
+- **README**: covers both stages, including the backup key expiry; see "README must cover" below. Loading `.env` works either with `set -a; source .env; set +a` or with the oh-my-zsh `dotenv` plugin (which only loads `.env` from the directory you `cd` into).
 
 ### Secrets file (`.env`)
 
