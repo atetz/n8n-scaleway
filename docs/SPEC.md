@@ -68,8 +68,8 @@ Operator values live in a gitignored `.tfvars` file.
   - Install and enable `unattended-upgrades`.
 - **Backup storage**:
   - Backup bucket with a lifecycle rule that expires objects after `backup_retention_days`, and one that aborts incomplete uploads after 1 day.
-  - IAM application for the backup job with **no** project-wide IAM policy, so it cannot reach the State bucket.
-  - Bucket policy as its only grant: the application may only upload (`PutObject` and multipart parts), never read or delete. The operator (resolved from `operator_access_key`) keeps full access; without that statement the bucket policy would lock the operator out.
+  - IAM application for the backup job with an IAM policy of `ObjectStorageObjectsWrite` on the project. Scaleway requires an IAM grant before a bucket policy has any effect.
+  - Bucket policy on the Backup bucket: the application may only upload (`PutObject` and multipart parts), never read or delete. Buckets with their own policy, such as the State bucket, stay closed to it. The operator (resolved from `operator_access_key`) keeps full access; without that statement the bucket policy would lock the operator out.
   - `scaleway_iam_api_key` for that application. The secret key is therefore stored in the state; the State bucket must stay private.
 - **Inventory**: `local_file` writes `provisioning/inventory.ini` pointing at the IPv4 address, user `deploy`.
 
@@ -112,7 +112,7 @@ One file holds every secret for both stages. OpenTofu gets its keys by loading t
 | Key | Notes |
 |---|---|
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Scaleway API key for the State bucket (OpenTofu backend) |
-| `TF_VAR_operator_access_key` | Always `${AWS_ACCESS_KEY_ID}`; `source` expands it. Feeds the `operator_access_key` variable |
+| `TF_VAR_operator_access_key` | Always `$(scw config get access-key)`; `source` runs it, so it matches the key the provider reads from the `scw` config |
 | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | |
 | `N8N_ENCRYPTION_KEY` | Always required. Must match the key of any Dump being imported, or saved credentials can't be decrypted |
 | `DOMAIN` | Kept out of the repo because it is personal |
