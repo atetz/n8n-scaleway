@@ -50,6 +50,7 @@ provisioning/            Ansible (Provisioning stage)
 | `ssh_key_name` | — | Name of the project's IAM SSH key |
 | `ssh_allowlist_ipv4` | — | List of CIDRs |
 | `ssh_allowlist_ipv6` | — | List of CIDRs |
+| `operator_access_key` | — | Access key ID (not secret) of the key you run OpenTofu with; keeps you in the Backup bucket policy |
 | `backup_retention_days` | `30` | Lifecycle expiry on the Backup bucket |
 
 Operator values live in a gitignored `.tfvars` file.
@@ -66,8 +67,9 @@ Operator values live in a gitignored `.tfvars` file.
   - `PermitRootLogin no`, `PasswordAuthentication no`.
   - Install and enable `unattended-upgrades`.
 - **Backup storage**:
-  - Backup bucket with a lifecycle rule that expires objects after `backup_retention_days`.
-  - IAM application for the backup job, with an IAM policy for Object Storage in this project and a bucket policy limiting that application to the Backup bucket.
+  - Backup bucket with a lifecycle rule that expires objects after `backup_retention_days`, and one that aborts incomplete uploads after 1 day.
+  - IAM application for the backup job with **no** project-wide IAM policy, so it cannot reach the State bucket.
+  - Bucket policy as its only grant: the application may only upload (`PutObject` and multipart parts), never read or delete. The operator (resolved from `operator_access_key`) keeps full access; without that statement the bucket policy would lock the operator out.
   - `scaleway_iam_api_key` for that application. The secret key is therefore stored in the state; the State bucket must stay private.
 - **Inventory**: `local_file` writes `provisioning/inventory.ini` pointing at the IPv4 address, user `deploy`.
 
@@ -110,6 +112,7 @@ One file holds every secret for both stages. OpenTofu gets its keys by loading t
 | Key | Notes |
 |---|---|
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Scaleway API key for the State bucket (OpenTofu backend) |
+| `TF_VAR_operator_access_key` | Always `${AWS_ACCESS_KEY_ID}`; `source` expands it. Feeds the `operator_access_key` variable |
 | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | |
 | `N8N_ENCRYPTION_KEY` | Always required. Must match the key of any Dump being imported, or saved credentials can't be decrypted |
 | `DOMAIN` | Kept out of the repo because it is personal |
