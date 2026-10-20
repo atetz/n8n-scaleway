@@ -105,6 +105,15 @@ One playbook, always connecting as the Deploy user. Steps, in order:
 7. **n8n**: start the full n8n compose project.
 8. **Backup timer**: a systemd service and timer running daily at the configured time. It streams `docker exec n8n_postgres pg_dump -Fc` through a pinned `rclone/rclone` container into the Backup bucket (no temporary file), with a timestamped object name.
 
+### Implementation notes
+
+- **Reading the Secrets file**: Ansible parses `.env` itself (it is not copied as-is). Skip blank lines, `#` lines, and every `AWS_*` and `TF_VAR_*` key. `TF_VAR_operator_access_key` holds a `$(...)` command that only a shell `source` expands, so it must never be evaluated or copied.
+- **Backup upload with a write-only key**: the backup application may only `PutObject` (plus multipart parts). rclone must not list or check the bucket: use `rcat` with `--s3-no-check-bucket` and `--s3-no-head`, provider `Scaleway`, endpoint `s3.<region>.scw.cloud`. Bucket name and region come from `tofu output backup_bucket` / `backup_region`.
+- **Unverified until the first real Backup**: that `ObjectStorageObjectsWrite` plus the bucket policy is enough for the upload. If it returns 403, the IAM policy in `infrastructure/backup.tf` needs adjusting.
+- **Postgres 18 on a fresh VM**: no data to migrate; only the volume path changes.
+- **Test Dump**: the operator has a real Dump from the existing install, kept in `provisioning/dumps/` (gitignored via `*.dump`). Use it for the Dump import acceptance check: workflows present, credentials decrypt with the old `N8N_ENCRYPTION_KEY`.
+- **README**: not written yet. Covers both stages; see "README must cover" below. Loading `.env` works either with `set -a; source .env; set +a` or with the oh-my-zsh `dotenv` plugin (which only loads `.env` from the directory you `cd` into).
+
 ### Secrets file (`.env`)
 
 One file holds every secret for both stages. OpenTofu gets its keys by loading the file into the shell (`set -a; source .env; set +a`); Ansible ignores the `AWS_*` keys when splitting.
