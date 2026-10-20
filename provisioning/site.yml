@@ -1,0 +1,267 @@
+# Provisioning stage: configure the VM and start Traefik, Postgres and n8n.
+# Run from provisioning/:  ansible-playbook site.yml [-e dump_file=dumps/<file>.dump]
+- name: Provision n8n
+  hosts: n8n
+  gather_facts: false
+
+  vars:
+    traefik_dir: "{{ compose_dir }}/traefik"
+    n8n_dir: "{{ compose_dir }}/n8n"
+    dump_path: "{{ dump_file | expanduser | realpath if dump_file else '' }}"
+
+  handlers:
+    - name: Reload systemd
+      become: true
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+
+  tasks:
+    # 1. VM ready
+
+    - name: Wait for SSH
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+    - name: Wait for cloud-init to finish
+      ansible.builtin.command: cloud-init status --wait
+      changed_when: false
+
+    # 2. Secrets file check (nothing is changed before this passes)
+
+    - name: Check that the Secrets file exists
+      ansible.builtin.assert:
+        that: secrets_file is file
+        fail_msg: "Secrets file not found: {{ secrets_file }}. Copy .env.example to .env and fill it in."
+        quiet: true
+
+    # Parse .env as KEY=value lines. Blank lines, comments, AWS_* and TF_VAR_* are
+    # skipped; those keys are for OpenTofu only.
+    - name: Read the Secrets file
+      ansible.builtin.set_fact:
+        secrets: "{{ dict(_keys | zip(_values)) }}"
+      vars:
+        _lines: >-
+          {{ lookup('ansible.builtin.file', secrets_file).splitlines()
+             | map('trim')
+             | reject('match', '(#|$)')
+             | map('regex_replace', '^export\s+', '')
+             | select('match', '[A-Za-z_][A-Za-z0-9_]*\s*=')
+             | reject('match', '(AWS_|TF_VAR_)')
+             | list }}
+        _keys: "{{ _lines | map('regex_replace', '^([^=]*?)\\s*=.*$', '\\1') | list }}"
+        _values: >-
+          {{ _lines
+             | map('regex_replace', '^[^=]*=\s*', '')
+             | map('regex_replace', '^"(.*)"$', '\1')
+             | map('regex_replace', "^'(.*)'$", '\1')
+             | list }}
+      no_log: true
+
+    - name: Check that every secret is set
+      ansible.builtin.assert:
+        that: _missing | length == 0
+        fail_msg: "Missing or empty in {{ secrets_file }}: {{ _missing | join(', ') }}"
+        quiet: true
+      vars:
+        _missing: >-
+          {{ (traefik_secret_keys + n8n_secret_keys + backup_secret_keys)
+             | reject('in', secrets | dict2items | selectattr('value') | map(attribute='key') | list)
+             | list }}
+
+    # Compose .env files are written single-quoted, so values stay literal ($ included).
+    - name: Check that no secret contains a single quote
+      ansible.builtin.assert:
+        that: _quoted | length == 0
+        fail_msg: "Values must not contain a single quote: {{ _quoted | join(', ') }}"
+        quiet: true
+      vars:
+        _quoted: "{{ secrets | dict2items | selectattr('value', 'search', \"'\") | map(attribute='key') | list }}"
+
+    - name: Check that the Backup bucket is known
+      ansible.builtin.assert:
+        that:
+          - backup_bucket | default('') | length > 0
+          - backup_region | default('') | length > 0
+        fail_msg: "backup_bucket / backup_region missing. Run `tofu apply` to regenerate inventory.ini."
+        quiet: true
+
+    - name: Check that the Dump exists
+      ansible.builtin.assert:
+        that: dump_path is file
+        fail_msg: "Dump not found: {{ dump_file }}"
+        quiet: true
+      when: dump_file | length > 0
+
+    # 3. Split secrets onto the VM
+
+    - name: Create the compose directories
+      become: true
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: deploy
+        group: deploy
+        mode: "0750"
+      loop:
+        - "{{ compose_dir }}"
+        - "{{ traefik_dir }}"
+        - "{{ n8n_dir }}"
+
+    - name: Write traefik/.env
+      ansible.builtin.template:
+        src: compose.env.j2
+        dest: "{{ traefik_dir }}/.env"
+        mode: "0600"
+      vars:
+        env_keys: "{{ traefik_secret_keys }}"
+      no_log: true
+      diff: false
+
+    - name: Write n8n/.env
+      ansible.builtin.template:
+        src: compose.env.j2
+        dest: "{{ n8n_dir }}/.env"
+        mode: "0600"
+      vars:
+        env_keys: "{{ n8n_secret_keys }}"
+      no_log: true
+      diff: false
+
+    - name: Create the backup credentials directory
+      become: true
+      ansible.builtin.file:
+        path: "{{ backup_credentials_file | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Write the backup credentials
+      become: true
+      ansible.builtin.template:
+        src: backup-credentials.j2
+        dest: "{{ backup_credentials_file }}"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+      diff: false
+
+    # 4. Traefik (creates the external proxy network)
+
+    - name: Copy the Traefik compose file
+      ansible.builtin.copy:
+        src: compose/traefik/docker-compose.yml
+        dest: "{{ traefik_dir }}/docker-compose.yml"
+        mode: "0640"
+
+    - name: Start Traefik
+      community.docker.docker_compose_v2:
+        project_src: "{{ traefik_dir }}"
+        state: present
+
+    # 5. Postgres
+
+    - name: Copy the n8n compose file
+      ansible.builtin.copy:
+        src: compose/n8n/docker-compose.yml
+        dest: "{{ n8n_dir }}/docker-compose.yml"
+        mode: "0640"
+
+    - name: Start Postgres and wait until healthy
+      community.docker.docker_compose_v2:
+        project_src: "{{ n8n_dir }}"
+        services: [postgres]
+        state: present
+        wait: true
+        wait_timeout: 120
+
+    # 6. Dump import (before n8n's first start, which creates the tables)
+
+    - name: Dump import
+      when: dump_file | length > 0
+      block:
+        - name: Count tables in the database
+          ansible.builtin.command:
+            argv:
+              - docker
+              - exec
+              - n8n_postgres
+              - sh
+              - -c
+              - psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM pg_stat_user_tables"
+          register: table_count
+          changed_when: false
+
+        - name: Skip the Dump import, the database is not empty
+          ansible.builtin.debug:
+            msg: >-
+              WARNING: the database already has {{ table_count.stdout | trim }} tables,
+              so {{ dump_file }} was not imported. A Dump import only runs on an empty database.
+          when: table_count.stdout | trim | int > 0
+
+        - name: Import the Dump
+          when: table_count.stdout | trim | int == 0
+          block:
+            - name: Copy the Dump to the VM
+              ansible.builtin.copy:
+                src: "{{ dump_path }}"
+                dest: "{{ n8n_dir }}/import.dump"
+                mode: "0600"
+
+            # One transaction: a failed import leaves the database empty, so it can be retried.
+            - name: Restore the Dump
+              ansible.builtin.shell:
+                cmd: >-
+                  docker exec -i n8n_postgres sh -c
+                  'pg_restore --no-owner --no-privileges --exit-on-error --single-transaction
+                  -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+                  < {{ (n8n_dir ~ '/import.dump') | quote }}
+              changed_when: true
+
+          always:
+            - name: Remove the Dump from the VM
+              ansible.builtin.file:
+                path: "{{ n8n_dir }}/import.dump"
+                state: absent
+
+    # 7. n8n
+
+    - name: Start n8n
+      community.docker.docker_compose_v2:
+        project_src: "{{ n8n_dir }}"
+        state: present
+
+    # 8. Backup timer
+
+    - name: Install the backup script
+      become: true
+      ansible.builtin.template:
+        src: n8n-backup.sh.j2
+        dest: "{{ backup_script }}"
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Install the backup units
+      become: true
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - n8n-backup.service
+        - n8n-backup.timer
+      notify: Reload systemd
+
+    - name: Reload systemd if units changed
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable the backup timer
+      become: true
+      ansible.builtin.systemd_service:
+        name: n8n-backup.timer
+        enabled: true
+        state: started

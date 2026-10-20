@@ -1,0 +1,27 @@
+#!/bin/bash
+# {{ ansible_managed }}
+# Uploads a Dump of the n8n database to the Backup bucket.
+#
+# The key may only upload, so rclone must never check the bucket or HEAD the object.
+# A streamed upload (unknown size) always ends with a HEAD, so the Dump goes to a
+# root-only temporary file first and is uploaded with a known size.
+set -euo pipefail
+
+object="n8n-$(date -u +%Y-%m-%dT%H%M%SZ).dump"
+workdir=$(mktemp -d /var/tmp/n8n-backup.XXXXXX)
+trap 'rm -rf "$workdir"' EXIT
+
+docker exec n8n_postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "$workdir/$object"
+
+docker run --rm \
+  --env-file {{ backup_credentials_file }} \
+  -e RCLONE_CONFIG_BACKUP_TYPE=s3 \
+  -e RCLONE_CONFIG_BACKUP_PROVIDER=Scaleway \
+  -e RCLONE_CONFIG_BACKUP_REGION={{ backup_region }} \
+  -e RCLONE_CONFIG_BACKUP_ENDPOINT=s3.{{ backup_region }}.scw.cloud \
+  -v "$workdir:/data:ro" \
+  {{ rclone_image }} \
+  copyto --no-check-dest --s3-no-check-bucket --s3-no-head \
+  "/data/$object" "backup:{{ backup_bucket }}/$object"
+
+echo "Uploaded $object ($(stat -c %s "$workdir/$object") bytes) to {{ backup_bucket }}"

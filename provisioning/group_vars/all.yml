@@ -1,0 +1,41 @@
+# Settings: non-secret configuration of a Setup. Secrets live in the Secrets file (.env).
+
+# Secrets file on the operator's machine, at the repository root.
+secrets_file: "{{ playbook_dir }}/../.env"
+
+# Remote directory holding one sub-directory per compose project.
+compose_dir: /opt/compose
+
+# Daily Backup time (HH:MM), in the GENERIC_TIMEZONE from the Secrets file.
+backup_time: "03:00"
+
+# Pinned: upgrade on purpose, not on every pull.
+rclone_image: rclone/rclone:1.75.2
+
+# Optional Dump import: -e dump_file=dumps/<file>.dump (relative to provisioning/, or absolute).
+# Only imported into an empty database; ignored on later runs.
+dump_file: ""
+
+# backup_bucket and backup_region come from inventory.ini, which OpenTofu writes
+# from the backup_bucket / backup_region outputs. Override with -e if needed.
+
+# --- Internal: which Secrets file keys go where. ---
+
+traefik_secret_keys:
+  - ACME_EMAIL
+
+n8n_secret_keys:
+  - POSTGRES_DB
+  - POSTGRES_USER
+  - POSTGRES_PASSWORD
+  - N8N_ENCRYPTION_KEY
+  - DOMAIN
+  - GENERIC_TIMEZONE
+  - EDITOR_ALLOWLIST
+
+backup_secret_keys:
+  - BACKUP_ACCESS_KEY
+  - BACKUP_SECRET_KEY
+
+backup_credentials_file: /etc/n8n-backup/credentials
+backup_script: /usr/local/sbin/n8n-backup

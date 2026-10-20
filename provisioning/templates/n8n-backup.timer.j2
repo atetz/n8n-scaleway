@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Daily n8n Backup
+
+[Timer]
+OnCalendar=*-*-* {{ backup_time }}:00 {{ secrets.GENERIC_TIMEZONE }}
+# Run at the next boot if the VM was off at backup time.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
