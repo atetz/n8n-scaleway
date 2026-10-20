@@ -68,3 +68,7 @@ provisioning/inventory.ini
 
 # Let's Encrypt state if ever copied locally
 acme.json
+
+# Local Dumps for the Dump import, whatever their extension
+provisioning/dumps/*
+!provisioning/dumps/.gitkeep
