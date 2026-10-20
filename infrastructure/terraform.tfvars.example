@@ -1,0 +1,16 @@
+# Copy to terraform.tfvars (gitignored) and fill in.
+# operator_access_key comes from the Secrets file (TF_VAR_operator_access_key).
+state_bucket = "my-tofu-state"
+project_id   = "00000000-0000-0000-0000-000000000000"
+name_prefix  = "personal"
+ssh_key_name = "my-laptop"
+
+ssh_allowlist_ipv4 = ["203.0.113.10/32"]
+ssh_allowlist_ipv6 = ["2001:db8:1234::/48"]
+
+# Optional, defaults shown
+# zone                  = "fr-par-1"
+# image                 = "docker"
+# instance_type         = "DEV1-M"
+# root_volume_size_gb   = 40
+# backup_retention_days = 30
