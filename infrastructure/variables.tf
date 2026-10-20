@@ -75,7 +75,7 @@ variable "ssh_allowlist_ipv6" {
 }
 
 variable "operator_access_key" {
-  description = "Access key ID of the API key you run OpenTofu with, so the Backup bucket policy keeps you in. Set in the Secrets file as TF_VAR_operator_access_key=$(scw config get access-key)."
+  description = "Access key ID of the API key you run OpenTofu with, so the Backup bucket policy keeps you in. Paste the literal key into the Secrets file as TF_VAR_operator_access_key (get it with `scw config get access-key`)."
   type        = string
 }
 
