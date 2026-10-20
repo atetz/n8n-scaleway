@@ -43,6 +43,15 @@ resource "scaleway_iam_api_key" "backup" {
   application_id     = scaleway_iam_application.backup.id
   default_project_id = var.project_id
   description        = "n8n backup job on ${var.name_prefix}-n8n"
+
+  # Scaleway gives new keys a default expiry (one year). Without this, every
+  # apply sees expires_at drift and replaces the key, so the VM's copy stops working.
+  # The key still expires: rotate it with
+  #   tofu apply -replace=scaleway_iam_api_key.backup
+  # then copy the new key into the Secrets file and re-run the playbook.
+  lifecycle {
+    ignore_changes = [expires_at]
+  }
 }
 
 # Who runs OpenTofu, so the bucket policy doesn't lock them out.

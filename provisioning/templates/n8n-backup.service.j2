@@ -1,0 +1,9 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Back up the n8n database to the Backup bucket
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart={{ backup_script }}

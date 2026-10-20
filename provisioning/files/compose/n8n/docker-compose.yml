@@ -51,8 +51,8 @@ services:
       - "traefik.enable=true"
       - "traefik.http.services.n8n.loadbalancer.server.port=5678"
 
-      - "traefik.http.routers.n8n-open.rule=Host(`${DOMAIN}`)"
-      # - "traefik.http.routers.n8n-open.rule=Host(`${DOMAIN}`) && (PathPrefix(`/webhook-test`) || PathPrefix(`/webhook`))" # only allow public access to n8n webhooks
+      # Webhooks and forms are always public. PathPrefix also matches the -test and -waiting variants.
+      - "traefik.http.routers.n8n-open.rule=Host(`${DOMAIN}`) && (PathPrefix(`/webhook`) || PathPrefix(`/form`))"
       - "traefik.http.routers.n8n-open.priority=100"
       - "traefik.http.routers.n8n-open.service=n8n"
       - "traefik.http.routers.n8n-open.entrypoints=websecure"
@@ -65,15 +65,16 @@ services:
       - "traefik.http.middlewares.n8n-headers.headers.contentTypeNosniff=true"
       - "traefik.http.middlewares.n8n-headers.headers.referrerPolicy=strict-origin-when-cross-origin"
 
-      # - "traefik.http.routers.n8n-restricted.rule=Host(`${DOMAIN}`)" # secure console with IP allowlist
-      # - "traefik.http.routers.n8n-restricted.priority=1"
-      # - "traefik.http.routers.n8n-restricted.service=n8n"
-      # - "traefik.http.routers.n8n-restricted.entrypoints=websecure"
-      # - "traefik.http.routers.n8n-restricted.middlewares=n8n-headers,ip-allowlist"
-      # - "traefik.http.middlewares.ip-allowlist.ipallowlist.sourcerange=${IP_WHITELIST}"
+      # Everything else (editor, API) only from the Editor allowlist. 0.0.0.0/0,::/0 allows everyone.
+      - "traefik.http.routers.n8n-restricted.rule=Host(`${DOMAIN}`)"
+      - "traefik.http.routers.n8n-restricted.priority=1"
+      - "traefik.http.routers.n8n-restricted.service=n8n"
+      - "traefik.http.routers.n8n-restricted.entrypoints=websecure"
+      - "traefik.http.routers.n8n-restricted.middlewares=n8n-headers,editor-allowlist"
+      - "traefik.http.middlewares.editor-allowlist.ipallowlist.sourcerange=${EDITOR_ALLOWLIST}"
 
   postgres:
-    image: postgres:14 # Support ends Nov 2026, see README for the upgrade
+    image: postgres:18.6 # Pinned: upgrade on purpose, not on every pull
     container_name: n8n_postgres
     restart: unless-stopped
     environment:
@@ -81,7 +82,7 @@ services:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql # Postgres 18 images keep data in a versioned sub-directory
     networks:
       - n8n
     healthcheck:

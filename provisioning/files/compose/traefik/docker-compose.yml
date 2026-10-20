@@ -2,7 +2,7 @@ name: traefik
 
 services:
   traefik:
-    image: traefik:v3.7
+    image: traefik:v3.7.15 # Pinned: upgrade on purpose, not on every pull
     container_name: traefik
     restart: unless-stopped
     security_opt:
@@ -50,3 +50,6 @@ services:
 networks:
   proxy:
     name: proxy
+    # Without IPv6 on the network, Docker proxies IPv6 clients and Traefik sees the
+    # bridge gateway instead of their address, which breaks the editor allowlist.
+    enable_ipv6: true
